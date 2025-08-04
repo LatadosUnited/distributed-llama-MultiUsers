@@ -18,8 +18,9 @@ static void inference(AppInferenceContext *context) {
     int *inputTokens = inputTokensVec.data();
 
     NnUint pos = 0;
+    int token;
     int nInputTokens;
-    context->tokenizer->encode(context->args->prompt, inputTokens, &nInputTokens, true, true);
+    context->tokenizer->encode(context->args->prompt, inputTokens, &nInputTokens, true, false);
 
     if (nInputTokens > context->header->seqLen)
         throw std::runtime_error("The number of prompt tokens is greater than the sequence length");
@@ -31,7 +32,6 @@ static void inference(AppInferenceContext *context) {
     NnUint evalTotalTime = 0;
     NnUint predTotalTime = 0;
 
-    int token = inputTokens[pos];
     printf("%s\n", context->args->prompt);
     for (;;) {
         long remainingTokens = nInputTokens - 1 - (long)pos;
@@ -155,8 +155,8 @@ static void chat(AppInferenceContext *context) {
         std::unique_ptr<int[]> inputTokensPtr(new int[inputPrompt.length + 2]);
         int *inputTokens = inputTokensPtr.get();
 
-        bool isStart = pos == 0;
-        context->tokenizer->encode((char*)inputPrompt.content, inputTokens, &nInputTokens, isStart, true);
+        bool addBos = pos == 0;
+        context->tokenizer->encode((char*)inputPrompt.content, inputTokens, &nInputTokens, addBos, true);
 
         NnUint userPromptEndPos = (NnUint)std::min<unsigned int>(seqLen, pos + nInputTokens - 1);
         for (NnUint i = 0; ;) {

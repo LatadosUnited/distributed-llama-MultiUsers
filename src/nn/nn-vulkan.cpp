@@ -128,8 +128,6 @@ NnVulkanBuffer::NnVulkanBuffer(NnVulkanContext *context, const vk::DeviceSize bu
 
     isHostVisible = false;
 
-    VULKAN_TRACE("Creating buffer of size %zu (fastAccess=%d)", (NnSize)bufferSize, fastAccess);
-
     uint32_t memoryTypeIndex = MEMORY_TYPE_INDEX_NOT_FOUND;
     if (fastAccess) {
         memoryTypeIndex = findMemoryTypeIndex(
@@ -224,12 +222,12 @@ NnVulkanDeviceData::NnVulkanDeviceData(NnVulkanContext *context, NnNetConfig *ne
     for (NnUint i = 0; i < nodeConfig->nBuffers; i++)
         buffers[i].reset(new NnVulkanBuffer(context, nodeConfig->buffers[i].size.nBytes, vk::BufferUsageFlagBits::eStorageBuffer, false));
 
-    NnRopeOpConfig *ropeLlamaOpConfig = (NnRopeOpConfig *)findFirstOpConfig(nodeConfig, OP_ROPE);
+    NnRopeLlamaOpConfig *ropeLlamaOpConfig = (NnRopeLlamaOpConfig *)findFirstOpConfig(nodeConfig, OP_ROPE_LLAMA);
     if (ropeLlamaOpConfig != nullptr) {
         assert(ropeLlamaOpConfig->ropeCacheBufferIndex < nodeConfig->nBuffers);
         NnVulkanBuffer *buffer = buffers[ropeLlamaOpConfig->ropeCacheBufferIndex].get();
         std::vector<NnByte> ropeCache(ropeLlamaOpConfig->slice.cacheSize.nBytes);
-        fullfillRopeCache(ropeLlamaOpConfig, (float *)ropeCache.data());
+        fullfillRopeLlama3Cache(ropeLlamaOpConfig, (float *)ropeCache.data());
         buffer->write(ropeCache.data());
     }
 }
@@ -373,7 +371,6 @@ NnVulkanDevice::NnVulkanDevice(NnUint gpuIndex, NnNetConfig *netConfig, NnNodeCo
     context.commandPool = context.device.createCommandPool(commandPoolCreateInfo);
     context.queue = context.device.getQueue(context.queueFamilyIndex, 0);
 
-    VULKAN_TRACE("Context created");
     data = new NnVulkanDeviceData(&context, netConfig, nodeConfig);
 }
 
@@ -403,7 +400,7 @@ static const char *getShaderFileName(const NnOpCode opCode, const NnOpQuantType 
     if (opCode == OP_EMBEDDING) {
         if (quantType == F32_F32_F32) return "embedding-forward-f32-f32.spv";
     }
-    if (opCode == OP_ROPE) {
+    if (opCode == OP_ROPE_LLAMA) {
         if (quantType == F32_F32_F32) return "rope-forward-f32-f32.spv";
     }
     if (opCode == OP_INV_RMS) {
@@ -462,8 +459,8 @@ static void buildShaderLayout(std::vector<NnVulkanBuffer *> &buffers, NnVulkanDe
             const NnShiftOpCodeConfig *config = (NnShiftOpCodeConfig *)opConfig->config;
             buffers.push_back(data->pipes[config->indexPipeIndex].get());
         } break;
-        case OP_ROPE: {
-            const NnRopeOpConfig *config = (NnRopeOpConfig *)opConfig->config;
+        case OP_ROPE_LLAMA: {
+            const NnRopeLlamaOpConfig *config = (NnRopeLlamaOpConfig *)opConfig->config;
             buffers.push_back(data->pipes[config->positionPipeIndex].get());
             buffers.push_back(data->buffers[config->ropeCacheBufferIndex].get());
         } break;
@@ -648,7 +645,7 @@ NnVulkanDeviceSegment::NnVulkanDeviceSegment(NnVulkanContext *context, NnVulkanD
 
         shaderModules[opIndex] = shaderModule;
         shaderCreateInfos[opIndex] = shaderCreateInfo;
-        VULKAN_TRACE("Segment %d, opIndex: %d, buffers: %zu", segmentIndex, opIndex, buffers.size());
+        VULKAN_TRACE("Segment %d, buffers: %zu", opIndex, buffers.size());
     }
 
     NnUint nUniformBuffers = 0;

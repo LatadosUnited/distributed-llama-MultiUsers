@@ -6,6 +6,8 @@
 #include "nn/nn-cpu.hpp"
 #include "tokenizer.hpp"
 #include "llm.hpp"
+#include "Request.hpp"
+#include <thread>
 
 class AppCliArgs {
 public:
@@ -87,6 +89,8 @@ typedef struct {
     Sampler *sampler;
     NnNetwork *network;
     NnExecutor *executor;
+    RequestQueue request_queue;
+    std::thread inference_thread;
 } AppInferenceContext;
 
 void runInferenceApp(AppCliArgs *args, void (*handler)(AppInferenceContext *context));

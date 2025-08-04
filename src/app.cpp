@@ -1,10 +1,19 @@
 #include "app.hpp"
+#include "Request.hpp"
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
+#include <iostream>
+#include <thread>
+#include <vector>
+#include <algorithm>
+
 #if defined(DLLAMA_VULKAN)
     #include "nn/nn-vulkan.hpp"
 #endif
+
+// Forward declaration for the inference loop
+void inference_loop(AppInferenceContext* context);
 
 static NnFloatType parseFloatType(char *val) {
     if (std::strcmp(val, "f32") == 0) return F_32;
@@ -51,7 +60,6 @@ AppCliArgs AppCliArgs::parse(int argc, char* *argv, bool requireMode) {
         args.mode = argv[1];
         i++;
     }
-    // First see if any of the args are asking for help/usage and fail fast
     for (int x = 0; x < argc; x++) {
         if ((std::strcmp(argv[x], "--usage") == 0) ||
             (std::strcmp(argv[x], "--help") == 0) ||
@@ -89,7 +97,7 @@ AppCliArgs AppCliArgs::parse(int argc, char* *argv, bool requireMode) {
                 int hostLen = separator - v;
                 args.workerHosts[s] = new char[hostLen + 1];
                 std::memcpy(args.workerHosts[s], v, hostLen);
-                args.workerHosts[s][hostLen] = '\0';
+                args.workerHosts[s][hostLen] = '\000';
                 args.workerPorts[s] = std::atoi(separator + 1);
             }
 
@@ -227,14 +235,13 @@ void runInferenceApp(AppCliArgs *args, void (*handler)(AppInferenceContext *cont
 
     LlmHeader header = loadLlmHeader(args->modelPath, args->maxSeqLen, args->syncType);
     if (nNodes > header.nKvHeads)
-        // TODO: https://github.com/b4rtaz/distributed-llama/issues/70
         throw std::runtime_error("This version does not support more nodes than the number of KV heads in the model");
     if (header.weightType == F_Q40 && header.syncType != F_Q80)
         throw std::runtime_error("This version supports only Q40 weights with Q80 sync type");
 
     Tokenizer tokenizer(args->tokenizerPath);
     if (tokenizer.vocabSize != header.vocabSize)
-        printf("Tokenizer vocab size does not match the model vocab size: %d != %d\n", tokenizer.vocabSize, header.vocabSize);
+        throw std::runtime_error("Tokenizer vocab size does not match the model vocab size");
 
     Sampler sampler(header.vocabSize, args->temperature, args->topp, args->seed);
 
@@ -283,15 +290,117 @@ void runInferenceApp(AppCliArgs *args, void (*handler)(AppInferenceContext *cont
     context.args = args;
     context.header = &header;
     context.inference = &inference;
-    context.sampler = &sampler;
     context.tokenizer = &tokenizer;
+    context.sampler = &sampler;
     context.network = network;
     context.executor = &executor;
 
+    // Start the inference loop in a new thread
+    context.inference_thread = std::thread(inference_loop, &context);
+
     handler(&context);
+
+    // Proper shutdown would require signaling the inference_thread to stop
+    // and then joining it. For now, we'll just let it run.
+    if(context.inference_thread.joinable()) {
+        // For a clean shutdown, you'd signal a stop and then join.
+        // context.stop_signal.set_value(); // Example signal
+        context.inference_thread.join();
+    }
 
     inference.finish();
 }
+
+void inference_loop(AppInferenceContext* context) {
+    std::vector<Request> active_requests;
+    
+    while (true) { // Main loop
+        // 1. Add new requests from the queue
+        while (!context->request_queue.is_empty()) {
+            active_requests.push_back(context->request_queue.pop());
+        }
+
+        if (active_requests.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // 2. Prepare batch for inference
+        std::vector<Request*> batch;
+        for (auto& req : active_requests) {
+            if (req.state != DONE) {
+                batch.push_back(&req);
+            }
+        }
+
+        if (batch.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+        
+        context->inference->setBatchSize(batch.size());
+
+        // 3. Process batch
+        for (size_t i = 0; i < batch.size(); ++i) {
+            Request* req = batch[i];
+
+            if (req->state == PROMPT_PROCESSING) {
+                // On the first run, process the prompt
+                int num_prompt_tokens = 0;
+                std::vector<int> prompt_tokens(req->prompt.length() + 3); // allocate space
+                context->tokenizer->encode((char*)req->prompt.c_str(), prompt_tokens.data(), &num_prompt_tokens, true, false);
+                req->tokens.assign(prompt_tokens.begin(), prompt_tokens.begin() + num_prompt_tokens);
+
+                if (req->tokens.empty()) {
+                    req->state = DONE;
+                    req->promise.set_value("[ERROR] Empty prompt after tokenization.");
+                    continue;
+                }
+                req->next_token_pos = 0;
+                context->inference->setToken(i, req->tokens[req->next_token_pos]);
+                context->inference->setPosition(req->next_token_pos);
+                req->next_token_pos++;
+            } else { // GENERATING
+                // For subsequent tokens
+                context->inference->setToken(i, req->tokens.back());
+                context->inference->setPosition(req->next_token_pos - 1);
+            }
+        }
+
+        // 4. Run model inference
+        context->inference->forward();
+
+        // 5. Sample next token and handle state changes
+        for (size_t i = 0; i < batch.size(); ++i) {
+            Request* req = batch[i];
+            if (req->state == DONE) continue;
+
+            int next_token = context->sampler->sample(context->inference->logitsPipe + i * context->header->vocabSize);
+            req->tokens.push_back(next_token);
+            req->generated_text += context->tokenizer->vocab[next_token];
+            req->generated_token_count++;
+
+            if (req->state == PROMPT_PROCESSING) {
+                req->state = GENERATING;
+            }
+
+            // Check for stop conditions
+            if (context->tokenizer->isEos(next_token) || 
+                (req->max_tokens > 0 && req->generated_token_count >= req->max_tokens)) {
+                req->state = DONE;
+                req->promise.set_value(req->generated_text);
+            }
+            req->next_token_pos++;
+        }
+
+        // 6. Remove completed requests
+        active_requests.erase(
+            std::remove_if(active_requests.begin(), active_requests.end(),
+                           [](const Request& req) { return req.state == DONE; }),
+            active_requests.end());
+    }
+}
+
 
 void runWorkerApp(AppCliArgs *args) {
     while (true) {

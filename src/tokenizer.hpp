@@ -29,7 +29,6 @@ enum TokenizerHeaderKey {
     CHAT_TEMPLATE = 7,
     CHAT_STOP = 8, // Ignored
     N_EOS_TOKENS = 9,
-    ADD_BOS = 10,
 };
 
 class Tokenizer {
@@ -52,14 +51,13 @@ public:
     unsigned int vocabSize;
     char **vocab;
     int bosId;
-    bool addBos;
     char *chatTemplate;
 
     Tokenizer(const char *tokenizer_path);
     ~Tokenizer();
     int findSpecialTokenStartWith(char *piece);
     int findRegularToken(char *piece);
-    void encode(char *text, int *tokens, int *nTokens, bool isStart, bool addSpecialTokens);
+    void encode(char *text, int *tokens, int *nTokens, bool addBos, bool addSpecialTokens);
     bool isEos(int token);
     char *decode(int token);
     void resetDecoder();
@@ -103,7 +101,6 @@ enum ChatTemplateType {
     TEMPLATE_LLAMA2 = 1,
     TEMPLATE_LLAMA3 = 2,
     TEMPLATE_DEEP_SEEK3 = 3,
-    TEMPLATE_CHATML = 4,
 };
 
 struct ChatItem {

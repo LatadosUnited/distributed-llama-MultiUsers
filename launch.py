@@ -44,25 +44,10 @@ MODELS = {
         'https://huggingface.co/b4rtaz/DeepSeek-R1-Distill-Llama-8B-Distributed-Llama/resolve/main/dllama_tokenizer_deepseek-r1-distill-llama-8b.t?download=true',
         'q40', 'q80', 'chat', '--max-seq-len 4096'
     ],
-    'qwen3_0.6b_q40': [
-        ['https://huggingface.co/b4rtaz/Qwen3-0.6B-Q40-Distributed-Llama/resolve/main/dllama_model_qwen3_0.6b_q40.m?download=true'],
-        'https://huggingface.co/b4rtaz/Qwen3-0.6B-Q40-Distributed-Llama/resolve/main/dllama_tokenizer_qwen3_0.6b.t?download=true',
-        'q40', 'q80', 'chat', '--max-seq-len 4096'
-    ],
-    'qwen3_1.7b_q40': [
-        ['https://huggingface.co/b4rtaz/Qwen3-1.7B-Q40-Distributed-Llama/resolve/main/dllama_model_qwen3_1.7b_q40.m?download=true'],
-        'https://huggingface.co/b4rtaz/Qwen3-1.7B-Q40-Distributed-Llama/resolve/main/dllama_tokenizer_qwen3_1.7b.t?download=true',
-        'q40', 'q80', 'chat', '--max-seq-len 4096'
-    ],
-    'qwen3_8b_q40': [
-        ['https://huggingface.co/b4rtaz/Qwen3-8B-Q40-Distributed-Llama/resolve/main/dllama_model_qwen3_8b_q40.m?download=true'],
-        'https://huggingface.co/b4rtaz/Qwen3-8B-Q40-Distributed-Llama/resolve/main/dllama_tokenizer_qwen3_8b.t?download=true',
-        'q40', 'q80', 'chat', '--max-seq-len 4096'
-    ],
 }
 
 def confirm(message: str):
-    result = input(f'❓ {message} ("Y" if yes): ').upper()
+    result = input(f'{message} ("Y" if yes): ').upper()
     return result == 'Y' or result == 'YES'
 
 def downloadFile(urls, path: str):
@@ -77,7 +62,7 @@ def downloadFile(urls, path: str):
             startPosition = file.tell()
             success = False
             for attempt in range(8):
-                print(f'📄 {url} (attempt: {attempt})')
+                print(f'{url} (attempt: {attempt})')
                 try:
                     with urlopen(url) as response:
                         while True:
@@ -87,23 +72,23 @@ def downloadFile(urls, path: str):
                             file.write(chunk)
                             sizeMb = file.tell() // (1024 * 1024)
                             if sizeMb != lastSizeMb:
-                                sys.stdout.write("\rDownloaded %i MB" % sizeMb)
+                                sys.stdout.write(f"\rDownloaded {sizeMb} MB")
                                 lastSizeMb = sizeMb
                     sys.stdout.write('\n')
                     success = True
                     break
                 except Exception as e:
-                    print(f'\n❌ Error downloading {url}: {e}')
+                    print(f'\nError downloading {url}: {e}')
                 file.seek(startPosition)
                 file.truncate()
                 time.sleep(1 * attempt)
             if not success:
                 raise Exception(f'Failed to download {url}')
-    sys.stdout.write(' ✅\n')
+    sys.stdout.write('Done.\n')
 
 def download(modelName: str, model: list):
     dirPath = os.path.join('models', modelName)
-    print(f'📀 Downloading {modelName} to {dirPath}...')
+    print(f'Downloading {modelName} to {dirPath}...')
     os.makedirs(dirPath, exist_ok=True)
     modelUrls = model[0]
     tokenizerUrl = model[1]
@@ -111,7 +96,7 @@ def download(modelName: str, model: list):
     tokenizerPath = os.path.join(dirPath, f'dllama_tokenizer_{modelName}.t')
     downloadFile(modelUrls, modelPath)
     downloadFile([tokenizerUrl], tokenizerPath)
-    print('📀 All files are downloaded')
+    print('All files are downloaded')
     return (modelPath, tokenizerPath)
 
 def writeRunFile(modelName: str, command: str):
@@ -166,7 +151,7 @@ if __name__ == '__main__':
     print('--- copy end -----')
 
     runFilePath = writeRunFile(modelName, command)
-    print(f'🌻 Created {runFilePath} script to easy run')
+    print(f'Created {runFilePath} script to easy run')
 
     if (not runAfterDownload):
         runAfterDownload = confirm('Do you want to run Distributed Llama?')

@@ -83,9 +83,7 @@ class TokensResolver:
 
     def resolve(self):
         cls = self.tokenizerConfig['tokenizer_class']
-        if (cls == 'PreTrainedTokenizerFast' or
-            cls == 'LlamaTokenizerFast' or
-            cls == 'Qwen2Tokenizer'):
+        if (cls == 'PreTrainedTokenizerFast' or cls == 'LlamaTokenizerFast'):
             return self.resolvePreTrainedTokenizerFast()
         if (cls == 'LlamaTokenizer'):
             return self.resolveLlamaTokenizer()
@@ -120,10 +118,6 @@ if __name__ == '__main__':
     if ('chat_template' in tokenizerConfig):
         chatTemplate = tokenizerConfig['chat_template'].encode('utf-8')
 
-    addBos = True
-    if ('add_bos_token' in tokenizerConfig):
-        addBos = tokenizerConfig['add_bos_token']
-
     outputFileName = f'dllama_tokenizer_{name}.t'
     with open(outputFileName, 'wb') as outputFile:
         writer.writeTokenizer(
@@ -132,6 +126,5 @@ if __name__ == '__main__':
             resolver.scores,
             chatTemplate,
             resolver.bosId,
-            addBos,
             resolver.eosIds)
     print(f'✅ Created {outputFileName}')
